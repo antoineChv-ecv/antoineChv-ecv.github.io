@@ -38,7 +38,7 @@ jobs:
           PROMPT: ${{ steps.last-commit.outputs.COMMIT_MESSAGE }}
           # The layer name inside the template used to render the commit message.
           # Change this if your template uses a different text layer name.
-          DYNAPICTURES_TEXT_LAYER_NAME: "test"
+          DYNAPICTURES_TEXT_LAYER_NAME: "text1"
         run: |
           set -euo pipefail
           mkdir -p images

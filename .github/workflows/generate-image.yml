@@ -25,7 +25,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      # Lit le message du dernier commit — il sera utilisé comme texte de l'image
+      # Lit le message du dernier commit — il sera injecté dans la couche texte du template
       - name: Récupérer le message du dernier commit
         id: last-commit
         run: |
@@ -33,16 +33,16 @@ jobs:
           git log -1 --pretty=%B >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-      # Génère une image IA via DynaPictures en utilisant le message du commit comme prompt
+      # Génère une image via DynaPictures en injectant le message du commit dans la couche texte
       # Secrets requis : DYNAPICTURES_API_KEY et DYNAPICTURES_TEMPLATE_UID
-      # AI_LAYER_NAME doit correspondre au nom de la couche "AI Image" dans ton template
+      # TEXT_LAYER_NAME doit correspondre au "Parameter name" de la couche texte dans le template
       - name: Générer l'image via DynaPictures
         id: generate
         env:
           DYNAPICTURES_API_KEY: ${{ secrets.DYNAPICTURES_API_KEY }}
           DYNAPICTURES_TEMPLATE_UID: ${{ secrets.DYNAPICTURES_TEMPLATE_UID }}
           COMMIT_MESSAGE: ${{ steps.last-commit.outputs.COMMIT_MESSAGE }}
-          AI_LAYER_NAME: "AI image 2"
+          TEXT_LAYER_NAME: "text3"
         run: |
           set -euo pipefail
           mkdir -p images
@@ -55,21 +55,21 @@ jobs:
 
           # Normalise le message sur une seule ligne (l'API n'accepte pas les sauts de ligne)
           prompt=$(echo "$COMMIT_MESSAGE" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g')
-          echo "Prompt envoyé à DynaPictures : $prompt"
+          echo "Message envoyé à DynaPictures : $prompt"
 
-          # Appel à l'API DynaPictures — le message du commit devient le prompt de la couche IA
+          # Appel à l'API DynaPictures — injecte le message dans la couche texte du template
           response=$(curl -s -X POST "https://api.dynapictures.com/designs/$DYNAPICTURES_TEMPLATE_UID" \
             -H "Authorization: Bearer $DYNAPICTURES_API_KEY" \
             -H "Content-Type: application/json" \
-            -d "$(jq -n --arg layer "$AI_LAYER_NAME" --arg text "$prompt" \
-                  '{params:[{name:$layer,prompt:$text}]}')")
+            -d "$(jq -n --arg layer "$TEXT_LAYER_NAME" --arg text "$prompt" \
+                  '{params:[{name:$layer,text:$text}]}')")
 
           echo "Réponse de l'API : $response"
 
           # Extrait l'URL de l'image depuis la réponse JSON
           image_url=$(echo "$response" | jq -r '.imageUrl // .pages[0].imageUrl // empty')
           if [ -z "$image_url" ]; then
-            echo "ERREUR : impossible d'extraire l'URL. Vérifiez la clé API et le nom de la couche IA." >&2
+            echo "ERREUR : impossible d'extraire l'URL. Vérifiez la clé API et le nom du paramètre texte." >&2
             exit 1
           fi
 

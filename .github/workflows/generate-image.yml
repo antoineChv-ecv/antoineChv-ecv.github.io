@@ -62,7 +62,7 @@ jobs:
             -H "Authorization: Bearer $DYNAPICTURES_API_KEY" \
             -H "Content-Type: application/json" \
             -d "$(jq -n --arg layer "$AI_LAYER_NAME" --arg text "$prompt" \
-                  '{params:[{name:$layer,text:$text}]}')")
+                  '{params:[{name:$layer,prompt:$text}]}')")
 
           echo "Réponse de l'API : $response"
 

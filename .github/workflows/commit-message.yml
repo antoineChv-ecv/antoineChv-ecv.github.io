@@ -1,0 +1,21 @@
+name: Commit message
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  show-last-commit:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Print last commit message
+        run: |
+          echo "Last commit message:"
+          git log -1 --pretty=%B

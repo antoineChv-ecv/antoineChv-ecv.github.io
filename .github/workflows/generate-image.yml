@@ -1,0 +1,130 @@
+name: Generate image & deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  generate-and-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get last commit message
+        id: last-commit
+        run: |
+          echo "COMMIT_MESSAGE<<EOF" >> $GITHUB_OUTPUT
+          git log -1 --pretty=%B >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Generate image via DynaPictures
+        id: generate
+        env:
+          DYNAPICTURES_API_KEY: ${{ secrets.DYNAPICTURES_API_KEY }}
+          DYNAPICTURES_TEMPLATE_UID: ${{ secrets.DYNAPICTURES_TEMPLATE_UID }}
+          PROMPT: ${{ steps.last-commit.outputs.COMMIT_MESSAGE }}
+          # The layer name inside the template used to render the commit message.
+          # Change this if your template uses a different text layer name.
+          DYNAPICTURES_TEXT_LAYER_NAME: "text1"
+        run: |
+          set -euo pipefail
+          mkdir -p images
+
+          if [ -z "${DYNAPICTURES_TEMPLATE_UID:-}" ]; then
+            echo "ERROR: DYNAPICTURES_TEMPLATE_UID secret is not set. Please add it in repository Secrets." >&2
+            exit 1
+          fi
+
+          # Normalize the prompt to a single line so it can be safely embedded in JSON
+          prompt=$(echo "$PROMPT" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g')
+          echo "Prompt: $prompt"
+
+          request_url="https://api.dynapictures.com/designs/$DYNAPICTURES_TEMPLATE_UID"
+          payload=$(jq -n --arg layer "$DYNAPICTURES_TEXT_LAYER_NAME" --arg p "$prompt" '{params:[{name:$layer,text:$p}]}')
+
+          response=$(curl -s -X POST "$request_url" \
+            -H "Authorization: Bearer $DYNAPICTURES_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "$payload")
+
+          echo "API response: $response"
+
+          # Ensure response is valid JSON, otherwise fail early.
+          if ! echo "$response" | jq -e . >/dev/null 2>&1; then
+            echo "Response is not valid JSON. Aborting." >&2
+            exit 1
+          fi
+
+          # DynaPictures returns the generated image URL under imageUrl (or pages[x].imageUrl)
+          url=$(echo "$response" | jq -r '.imageUrl // .pages[0].imageUrl // .data[0].url // .url // empty')
+          if [ -z "$url" ]; then
+            echo "Failed to extract image URL from response" >&2
+            exit 1
+          fi
+
+          filename="images/$(date +%Y%m%d%H%M%S).png"
+          curl -sSL "$url" -o "$filename"
+
+          echo "IMAGE_PATH=$filename" >> $GITHUB_OUTPUT
+
+      - name: Generate index.html
+        run: |
+          mkdir -p images
+          cat > images/index.html <<'EOF'
+          <!doctype html>
+          <html lang="en">
+            <head>
+              <meta charset="utf-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1">
+              <title>Generated images</title>
+              <style>
+                body { font-family: system-ui, sans-serif; padding: 2rem; }
+                img { max-width: 400px; height: auto; display: block; margin-bottom: 1rem; }
+                li { margin-bottom: 2rem; }
+              </style>
+            </head>
+            <body>
+              <h1>Images générées</h1>
+              <ul>
+          EOF
+
+          for img in images/*.{png,jpg,jpeg,gif}; do
+            [ -e "$img" ] || continue
+            base=$(basename "$img")
+            cat >> images/index.html <<EOF
+                <li>
+                  <figure>
+                    <img src="$base" alt="$base" />
+                    <figcaption>$base</figcaption>
+                  </figure>
+                </li>
+          EOF
+          done
+
+          cat >> images/index.html <<'EOF'
+              </ul>
+            </body>
+          </html>
+          EOF
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./images
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

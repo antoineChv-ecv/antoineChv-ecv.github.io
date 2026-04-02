@@ -5,7 +5,6 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# Permissions nécessaires : écriture du dépôt (commit image) + déploiement GitHub Pages
 permissions:
   contents: write
   pages: write
@@ -19,115 +18,43 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
-      # Récupère tout l'historique afin d'avoir toutes les images déjà committées
-      - name: Checkout du dépôt
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # Lit le message du dernier commit — il sera injecté dans la couche texte du template
-      - name: Récupérer le message du dernier commit
-        id: last-commit
-        run: |
-          echo "COMMIT_MESSAGE<<EOF" >> $GITHUB_OUTPUT
-          git log -1 --pretty=%B >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
-      # Génère une image via DynaPictures en injectant le message du commit dans la couche texte
-      # Secrets requis : DYNAPICTURES_API_KEY et DYNAPICTURES_TEMPLATE_UID
-      # TEXT_LAYER_NAME doit correspondre au "Parameter name" de la couche texte dans le template
       - name: Générer l'image via DynaPictures
-        id: generate
         env:
           DYNAPICTURES_API_KEY: ${{ secrets.DYNAPICTURES_API_KEY }}
           DYNAPICTURES_TEMPLATE_UID: ${{ secrets.DYNAPICTURES_TEMPLATE_UID }}
-          COMMIT_MESSAGE: ${{ steps.last-commit.outputs.COMMIT_MESSAGE }}
-          TEXT_LAYER_NAME: "text3"
         run: |
-          set -euo pipefail
           mkdir -p images
-
-          # Vérification des secrets obligatoires
-          if [ -z "${DYNAPICTURES_API_KEY:-}" ] || [ -z "${DYNAPICTURES_TEMPLATE_UID:-}" ]; then
-            echo "ERREUR : secrets DYNAPICTURES_API_KEY ou DYNAPICTURES_TEMPLATE_UID manquants." >&2
-            exit 1
-          fi
-
-          # Normalise le message sur une seule ligne (l'API n'accepte pas les sauts de ligne)
-          prompt=$(echo "$COMMIT_MESSAGE" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g')
-          echo "Message envoyé à DynaPictures : $prompt"
-
-          # Appel à l'API DynaPictures — injecte le message dans la couche texte du template
-          response=$(curl -s -X POST "https://api.dynapictures.com/designs/$DYNAPICTURES_TEMPLATE_UID" \
+          MSG=$(git log -1 --pretty=%B | tr '\n' ' ')
+          RESPONSE=$(curl -s -X POST "https://api.dynapictures.com/designs/$DYNAPICTURES_TEMPLATE_UID" \
             -H "Authorization: Bearer $DYNAPICTURES_API_KEY" \
             -H "Content-Type: application/json" \
-            -d "$(jq -n --arg layer "$TEXT_LAYER_NAME" --arg text "$prompt" \
-                  '{params:[{name:$layer,text:$text}]}')")
+            -d "{\"params\":[{\"name\":\"text3\",\"text\":\"$MSG\"}]}")
+          echo "Réponse : $RESPONSE"
+          URL=$(echo "$RESPONSE" | jq -r '.imageUrl // .pages[0].imageUrl')
+          curl -sSL "$URL" -o "images/$(date +%Y%m%d%H%M%S).png"
 
-          echo "Réponse de l'API : $response"
-
-          # Extrait l'URL de l'image depuis la réponse JSON
-          image_url=$(echo "$response" | jq -r '.imageUrl // .pages[0].imageUrl // empty')
-          if [ -z "$image_url" ]; then
-            echo "ERREUR : impossible d'extraire l'URL. Vérifiez la clé API et le nom du paramètre texte." >&2
-            exit 1
-          fi
-
-          # Télécharge et sauvegarde l'image avec un nom horodaté
-          filename="images/$(date +%Y%m%d%H%M%S).png"
-          curl -sSL "$image_url" -o "$filename"
-          echo "Image sauvegardée : $filename"
-          echo "IMAGE_PATH=$filename" >> $GITHUB_OUTPUT
-
-      # Committe l'image dans le dépôt pour accumuler toutes les images au fil du temps
-      - name: Committer l'image générée
+      - name: Committer l'image
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add images/
-          git commit -m "chore: ajout image générée" || echo "Rien à committer"
+          git commit -m "chore: ajout image générée" || true
           git push
 
-      # Génère un index.html listant toutes les images présentes dans /images/
       - name: Générer index.html
         run: |
-          cat > images/index.html << 'HTML'
-          <!doctype html>
-          <html lang="fr">
-            <head>
-              <meta charset="utf-8">
-              <meta name="viewport" content="width=device-width, initial-scale=1">
-              <title>Images générées</title>
-              <style>
-                body { font-family: system-ui, sans-serif; max-width: 960px; margin: 0 auto; padding: 2rem; }
-                h1 { margin-bottom: 2rem; }
-                .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1.5rem; }
-                .card { border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; }
-                .card img { width: 100%; height: auto; display: block; }
-                .card p { padding: 0.5rem 1rem; font-size: 0.85rem; color: #6b7280; margin: 0; }
-              </style>
-            </head>
-            <body>
-              <h1>Images générées</h1>
-              <div class="grid">
-          HTML
-
-          # Ajoute une carte pour chaque image du dossier
-          for img in images/*.{png,jpg,jpeg,gif}; do
+          echo '<html lang="fr"><head><meta charset="utf-8"><title>Images</title></head><body>' > images/index.html
+          for img in images/*.png images/*.jpg; do
             [ -e "$img" ] || continue
-            base=$(basename "$img")
-            echo "      <div class=\"card\"><img src=\"$base\" alt=\"$base\"><p>$base</p></div>" >> images/index.html
+            echo "<img src='$(basename $img)' style='max-width:400px;margin:1rem'>" >> images/index.html
           done
+          echo '</body></html>' >> images/index.html
 
-          cat >> images/index.html << 'HTML'
-              </div>
-            </body>
-          </html>
-          HTML
-
-      # Publie le contenu de /images/ (images + index.html) sur GitHub Pages
-      - name: Upload artifact GitHub Pages
-        uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v3
         with:
           path: ./images
 

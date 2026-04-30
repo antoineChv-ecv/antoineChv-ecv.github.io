@@ -5,6 +5,13 @@ on:
     branches:
       - main
 
+# ─────────────────────────────────────────────
+# PERMISSIONS NÉCESSAIRES POUR POSTER UN COMMENTAIRE
+# contents: write → permet de lire le repo et poster sur les commits
+# ─────────────────────────────────────────────
+permissions:
+  contents: write
+
 jobs:
   comment-on-commit:
     runs-on: ubuntu-latest
@@ -20,7 +27,6 @@ jobs:
       # ─────────────────────────────────────────────
       - name: Get latest image filename
         run: |
-          # Récupère le fichier PNG le plus récent dans images/
           IMAGE_FILE=$(ls -t images/*.png 2>/dev/null | head -n 1 | xargs basename)
 
           if [ -z "$IMAGE_FILE" ]; then
@@ -33,7 +39,6 @@ jobs:
 
       # ─────────────────────────────────────────────
       # 2️⃣ CONSTRUCTION DE L'URL DE L'IMAGE
-      # URL raw GitHub pour afficher l'image dans le commentaire
       # ─────────────────────────────────────────────
       - name: Build image URL
         run: |

@@ -10,59 +10,21 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # ─────────────────────────────────────────────
-      # 1️⃣ RÉCUPÉRATION DU RUN ID DU WORKFLOW QUI GÉNÈRE L'IMAGE
-      # On cherche le dernier run réussi du workflow "generate-image"
-      # pour pouvoir télécharger son artefact
-      # ─────────────────────────────────────────────
-      - name: Get latest successful run ID
-        id: get_run
-        uses: actions/github-script@v6
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            // Récupère les runs du workflow qui génère l'image
-            const runs = await github.rest.actions.listWorkflowRuns({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              workflow_id: 'generate-image.yml', // ← nom de ton workflow de génération
-              status: 'success',
-              per_page: 1
-            });
-
-            if (runs.data.workflow_runs.length === 0) {
-              core.setFailed('❌ Aucun run réussi trouvé pour generate-image.yml');
-              return;
-            }
-
-            const runId = runs.data.workflow_runs[0].id;
-            console.log(`✅ Run ID trouvé : ${runId}`);
-
-            // Exporte le run ID pour l'étape suivante
-            core.setOutput('run_id', runId);
+      - name: Checkout repo
+        uses: actions/checkout@v4
 
       # ─────────────────────────────────────────────
-      # 2️⃣ TÉLÉCHARGEMENT DE L'ARTEFACT IMAGE
-      # On récupère l'artefact "image-generee" depuis
-      # le run ID trouvé à l'étape précédente
+      # 1️⃣ RÉCUPÉRATION DE LA DERNIÈRE IMAGE COMMITTÉE
+      # L'image est déjà dans le repo dans images/
+      # On récupère simplement le fichier le plus récent
       # ─────────────────────────────────────────────
-      - name: Download generated image artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: image-generee
-          path: ./artifacts
-          run-id: ${{ steps.get_run.outputs.run_id }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-
-      # ─────────────────────────────────────────────
-      # 3️⃣ RÉCUPÉRATION DYNAMIQUE DU NOM DE FICHIER
-      # ─────────────────────────────────────────────
-      - name: Get image filename dynamically
+      - name: Get latest image filename
         run: |
-          IMAGE_FILE=$(ls ./artifacts/ | head -n 1)
+          # Récupère le fichier PNG le plus récent dans images/
+          IMAGE_FILE=$(ls -t images/*.png 2>/dev/null | head -n 1 | xargs basename)
 
           if [ -z "$IMAGE_FILE" ]; then
-            echo "❌ Aucune image trouvée dans ./artifacts/"
+            echo "❌ Aucune image trouvée dans images/"
             exit 1
           fi
 
@@ -70,16 +32,17 @@ jobs:
           echo "IMAGE_FILE=$IMAGE_FILE" >> $GITHUB_ENV
 
       # ─────────────────────────────────────────────
-      # 4️⃣ CONSTRUCTION DE L'URL DE L'IMAGE
+      # 2️⃣ CONSTRUCTION DE L'URL DE L'IMAGE
+      # URL raw GitHub pour afficher l'image dans le commentaire
       # ─────────────────────────────────────────────
       - name: Build image URL
         run: |
           IMAGE_URL="https://raw.githubusercontent.com/${{ github.repository }}/main/images/$IMAGE_FILE"
-          echo "🔗 URL de l'image : $IMAGE_URL"
+          echo "🔗 URL : $IMAGE_URL"
           echo "IMAGE_URL=$IMAGE_URL" >> $GITHUB_ENV
 
       # ─────────────────────────────────────────────
-      # 5️⃣ AJOUT DU COMMENTAIRE SUR LE COMMIT
+      # 3️⃣ AJOUT DU COMMENTAIRE SUR LE COMMIT
       # ─────────────────────────────────────────────
       - name: Post comment on commit
         uses: actions/github-script@v6

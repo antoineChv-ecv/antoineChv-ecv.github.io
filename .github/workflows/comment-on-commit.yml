@@ -1,6 +1,6 @@
 name: Comment on Commit with Generated Image
 
-# Se déclenche après un push sur main
+
 on:
   push:
     branches:

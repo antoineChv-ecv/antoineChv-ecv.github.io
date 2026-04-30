@@ -1,6 +1,5 @@
 name: Comment on Commit with Generated Image
 
-
 on:
   push:
     branches:
@@ -12,74 +11,85 @@ jobs:
 
     steps:
       # ─────────────────────────────────────────────
-      # 1️⃣ TÉLÉCHARGEMENT DE L'ARTEFACT IMAGE
-      # On récupère l'artefact "image-generee" produit
-      # par un workflow précédent (ex: génération d'image)
+      # 1️⃣ RÉCUPÉRATION DU RUN ID DU WORKFLOW QUI GÉNÈRE L'IMAGE
+      # On cherche le dernier run réussi du workflow "generate-image"
+      # pour pouvoir télécharger son artefact
+      # ─────────────────────────────────────────────
+      - name: Get latest successful run ID
+        id: get_run
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            // Récupère les runs du workflow qui génère l'image
+            const runs = await github.rest.actions.listWorkflowRuns({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'generate-image.yml', // ← nom de ton workflow de génération
+              status: 'success',
+              per_page: 1
+            });
+
+            if (runs.data.workflow_runs.length === 0) {
+              core.setFailed('❌ Aucun run réussi trouvé pour generate-image.yml');
+              return;
+            }
+
+            const runId = runs.data.workflow_runs[0].id;
+            console.log(`✅ Run ID trouvé : ${runId}`);
+
+            // Exporte le run ID pour l'étape suivante
+            core.setOutput('run_id', runId);
+
+      # ─────────────────────────────────────────────
+      # 2️⃣ TÉLÉCHARGEMENT DE L'ARTEFACT IMAGE
+      # On récupère l'artefact "image-generee" depuis
+      # le run ID trouvé à l'étape précédente
       # ─────────────────────────────────────────────
       - name: Download generated image artifact
         uses: actions/download-artifact@v4
         with:
-          name: image-generee        # nom de l'artefact à récupérer
-          path: ./artifacts          # dossier de destination local
+          name: image-generee
+          path: ./artifacts
+          run-id: ${{ steps.get_run.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       # ─────────────────────────────────────────────
-      # 2️⃣ RÉCUPÉRATION DYNAMIQUE DU NOM DE FICHIER
-      # ls récupère le premier fichier dans ./artifacts/
-      # puis on l'exporte dans GITHUB_ENV pour les steps suivants
+      # 3️⃣ RÉCUPÉRATION DYNAMIQUE DU NOM DE FICHIER
       # ─────────────────────────────────────────────
       - name: Get image filename dynamically
-        id: get_image
         run: |
-          # Récupère le nom du fichier image (le premier trouvé)
           IMAGE_FILE=$(ls ./artifacts/ | head -n 1)
 
-          # Stoppe le workflow si aucun fichier n'est trouvé
           if [ -z "$IMAGE_FILE" ]; then
             echo "❌ Aucune image trouvée dans ./artifacts/"
             exit 1
           fi
 
           echo "✅ Image trouvée : $IMAGE_FILE"
-
-          # Exporte le nom du fichier pour les étapes suivantes
           echo "IMAGE_FILE=$IMAGE_FILE" >> $GITHUB_ENV
 
       # ─────────────────────────────────────────────
-      # 3️⃣ CONSTRUCTION DE L'URL DE L'IMAGE
-      # L'image doit être committée dans le repo (dossier images/)
-      # pour être accessible via une URL GitHub raw
-      # Format : https://raw.githubusercontent.com/{owner}/{repo}/{branch}/images/{filename}
+      # 4️⃣ CONSTRUCTION DE L'URL DE L'IMAGE
       # ─────────────────────────────────────────────
       - name: Build image URL
         run: |
-          # Construction de l'URL raw GitHub pour afficher l'image dans le commentaire
           IMAGE_URL="https://raw.githubusercontent.com/${{ github.repository }}/main/images/$IMAGE_FILE"
           echo "🔗 URL de l'image : $IMAGE_URL"
-
-          # Exporte l'URL pour l'étape suivante
           echo "IMAGE_URL=$IMAGE_URL" >> $GITHUB_ENV
 
       # ─────────────────────────────────────────────
-      # 4️⃣ AJOUT DU COMMENTAIRE SUR LE COMMIT
-      # github-script permet d'utiliser l'API GitHub
-      # directement en JS dans le workflow
-      # GITHUB_TOKEN est automatiquement fourni par GitHub
+      # 5️⃣ AJOUT DU COMMENTAIRE SUR LE COMMIT
       # ─────────────────────────────────────────────
       - name: Post comment on commit
         uses: actions/github-script@v6
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            // Récupère le SHA du commit qui a déclenché le workflow
             const commitSha = context.sha;
-
-            // Récupère le message du commit depuis le contexte
             const commitMessage = context.payload.head_commit.message;
-
-            // Récupère l'URL de l'image depuis les variables d'environnement
             const imageUrl = process.env.IMAGE_URL;
 
-            // Construit le corps du commentaire en Markdown
             const commentBody = `
             ## 🖼️ Image générée automatiquement
 
@@ -93,7 +103,6 @@ jobs:
             > 🤖 Ce commentaire a été ajouté automatiquement par GitHub Actions.
             `;
 
-            // Poste le commentaire sur le commit via l'API GitHub
             await github.rest.repos.createCommitComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
